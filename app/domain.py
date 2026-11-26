@@ -141,3 +141,95 @@ def named_margins(model: Model, w: dict) -> dict:
         "s2_s3": conv(b, model.majors2, model.majors3),
         "s1_s3": conv(z, model.majors1, model.majors3),
     }
+
+
+# ---------- 目录换码 ----------
+
+SEM_LABELS = {"sem1": "第一学期", "sem2": "第二学期", "sem3": "第三学期"}
+
+
+def majors_of_flows(flows12: dict, flows23: dict) -> dict[str, list[str]]:
+    """由两份去向表导出三学期专业清单（排序保证确定性）。"""
+    return {
+        "sem1": sorted({s for s, _ in flows12}),
+        "sem2": sorted({d for _, d in flows12} | {s for s, _ in flows23}),
+        "sem3": sorted({d for _, d in flows23}),
+    }
+
+
+def check_recode(mappings: dict[str, dict[str, str]],
+                 majors: dict[str, list[str]]) -> list[str]:
+    """校验换码对照，返回问题列表（空为通过）。
+
+    - 旧码须在该学期现行专业清单内
+    - 新码不能为空
+    - 换完后同一学期不得重码（两码互换合法：成对列出即可）
+    """
+    problems: list[str] = []
+    for sem, label in SEM_LABELS.items():
+        mapping = mappings.get(sem, {})
+        current = majors[sem]
+        valid: dict[str, str] = {}
+        for old, new in mapping.items():
+            if old not in current:
+                problems.append(
+                    f"{label}现行专业清单中无旧码「{old}」对应的专业")
+            if not new:
+                problems.append(f"{label}旧码「{old}」的新码不能为空")
+            else:
+                valid[old] = new
+        after = [valid.get(m, m) for m in current]
+        seen: set[str] = set()
+        dups: set[str] = set()
+        for code in after:
+            if code in seen:
+                dups.add(code)
+            seen.add(code)
+        for d in sorted(dups):
+            problems.append(
+                f"换码后{label}专业码「{d}」重码（如为互换须把两码成对列出）")
+    return problems
+
+
+def rename_table(table: dict, from_map: dict, to_map: dict) -> dict:
+    """按对照改键名；未列出的码沿用。"""
+    return {(from_map.get(s, s), to_map.get(d, d)): n
+            for (s, d), n in table.items()}
+
+
+def apply_mappings(flows12: dict, flows23: dict, supplements: dict,
+                   mappings: dict[str, dict[str, str]]):
+    """按对照换码，返回改名后的 (flows12, flows23, supplements)。"""
+    m1, m2, m3 = mappings["sem1"], mappings["sem2"], mappings["sem3"]
+    return (rename_table(flows12, m1, m2),
+            rename_table(flows23, m2, m3),
+            rename_table(supplements, m1, m3))
+
+
+def convert_previous_version(items: list[tuple[str, str, int]],
+                             recode: dict):
+    """把上一版补报条目按最近一次换码前的专业清单与对照转成现行码。
+
+    items: [(from_major, to_major, count), ...]（旧码）
+    recode: {"mappings": ..., "majors_before": ...}（换码档案）
+    返回 (转换后条目, 问题列表)；旧码无对应专业时记入问题列表。
+    """
+    majors_before = recode["majors_before"]
+    mappings = recode["mappings"]
+    problems: list[str] = []
+    converted: list[tuple[str, str, int]] = []
+    for f, t, n in items:
+        if f in majors_before["sem1"]:
+            nf = mappings["sem1"].get(f, f)
+        else:
+            nf = f
+            problems.append(
+                f"旧码「{f}」在上一版（换码前）第一学期专业清单中无对应专业")
+        if t in majors_before["sem3"]:
+            nt = mappings["sem3"].get(t, t)
+        else:
+            nt = t
+            problems.append(
+                f"旧码「{t}」在上一版（换码前）第三学期专业清单中无对应专业")
+        converted.append((nf, nt, n))
+    return converted, problems

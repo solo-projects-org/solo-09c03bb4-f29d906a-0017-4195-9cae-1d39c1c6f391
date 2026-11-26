@@ -1,0 +1,6 @@
+{
+  "items": [
+    {"from_major": "计算机", "to_major": "计算机", "count": 50},
+    {"from_major": "数学", "to_major": "数学", "count": 40}
+  ]
+}
